@@ -90,7 +90,7 @@ wss.on('connection', ws => {
       return handleNameInput(session, input);
     }
 
-    if (session.state === 'awaiting_new_password' || session.state === 'awaiting_login_password') {
+    if (session.state === 'awaiting_new_password' || session.state === 'awaiting_new_password_confirm' || session.state === 'awaiting_login_password') {
       handlePasswordInput(session, input).catch(err => {
         console.error('[server] Password handling error:', err.message);
         ws.close();
@@ -123,8 +123,8 @@ function handleNameInput(session, name) {
   }
 
   const existing = playerManager.findCharacter(name);
-  if (existing) {
-    session.pendingName = existing.name;
+  if (existing || playerManager.hasPassword(name)) {
+    session.pendingName = existing ? existing.name : name;
     session.state = 'awaiting_login_password';
     sendRaw(session.ws, 'Password: ');
   } else {
@@ -144,8 +144,22 @@ async function handlePasswordInput(session, password) {
       sendRaw(session.ws, `Password too short (min ${MIN_PASSWORD_LENGTH} characters). Try again: `);
       return;
     }
+    session.pendingPassword = password;
+    session.state = 'awaiting_new_password_confirm';
+    sendRaw(session.ws, 'Confirm password: ');
+    return;
+  }
+
+  if (session.state === 'awaiting_new_password_confirm') {
+    if (password !== session.pendingPassword) {
+      session.pendingPassword = null;
+      session.state = 'awaiting_new_password';
+      sendRaw(session.ws, `Passwords do not match. Choose a password (min ${MIN_PASSWORD_LENGTH} characters): `);
+      return;
+    }
     const char = playerManager.createCharacter(session.pendingName);
-    await playerManager.setPassword(session.pendingName, password);
+    await playerManager.setPassword(session.pendingName, session.pendingPassword);
+    session.pendingPassword = null;
     const player = playerManager.createPlayer(session.ws, char.name, char.roomId);
     session.player = player;
     session.state = 'in_game';
@@ -164,8 +178,8 @@ async function handlePasswordInput(session, password) {
       sendRaw(session.ws, 'Incorrect password. Try again: ');
       return;
     }
-    const existing = playerManager.findCharacter(session.pendingName);
-    const player = playerManager.createPlayer(session.ws, existing.name, existing.roomId);
+    const character = playerManager.findCharacter(session.pendingName) || playerManager.createCharacter(session.pendingName);
+    const player = playerManager.createPlayer(session.ws, character.name, character.roomId);
     session.player = player;
     session.state = 'in_game';
     console.log(`[server] Player ${player.name} logged in`);

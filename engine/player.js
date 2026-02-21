@@ -68,6 +68,11 @@ function verifyPassword(name, password) {
 // Load persisted passwords on startup
 loadPasswords();
 
+/** Return true if a stored password entry exists for this character name. */
+function hasPassword(name) {
+  return Object.prototype.hasOwnProperty.call(passwordStore, name.toLowerCase());
+}
+
 /** Find a character by name (case-insensitive). Returns character data or null. */
 function findCharacter(name) {
   return characters.get(name.toLowerCase()) || null;
@@ -126,4 +131,4 @@ function broadcast(text) {
   }
 }
 
-module.exports = { createPlayer, removePlayer, getPlayer, allPlayers, send, broadcast, findCharacter, createCharacter, saveCharacterState, setPassword, verifyPassword };
+module.exports = { createPlayer, removePlayer, getPlayer, allPlayers, send, broadcast, findCharacter, createCharacter, saveCharacterState, setPassword, verifyPassword, hasPassword };
