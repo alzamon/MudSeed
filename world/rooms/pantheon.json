@@ -3,12 +3,15 @@
   "name": "The Pantheon",
   "description": "You stand in the Pantheon — a vast, circular chamber of pale stone that smells faintly of ozone and possibility. The ceiling arches impossibly high overhead, lost in a soft luminescence that has no obvious source. The walls are smooth and unmarked, waiting. This is where all things begin.\n\nThe air hums with a low, almost sub-audible resonance, as if the room itself is breathing. You are not sure whether you are alone.",
   "exits": {
-    "north": "hall-of-names"
+    "north": "hall-of-names",
+    "down": "unmade-place"
   },
   "items": [
     "whispering-coin"
   ],
-  "npcs": [],
+  "npcs": [
+    "stone-sparrow"
+  ],
   "created_by": "system",
   "created_at": "2026-02-21T00:00:00.000Z"
 }
