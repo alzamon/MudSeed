@@ -1,5 +1,9 @@
 # MudSeed
 
+## DISCLAIMER
+
+wibe coded work in progress. 
+
 A framework for evolving a text-based MUD from scratch using LLM god agents.
 
 The world begins with a single room — **The Pantheon** — and is shaped over time
