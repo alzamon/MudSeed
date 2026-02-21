@@ -8,12 +8,35 @@
 let nextId = 1;
 const players = new Map(); // id -> player
 
-function createPlayer(ws) {
+// Persistent character store: lowercase name -> { name, roomId }
+const characters = new Map();
+
+/** Find a character by name (case-insensitive). Returns character data or null. */
+function findCharacter(name) {
+  return characters.get(name.toLowerCase()) || null;
+}
+
+/** Create and store a new character with default starting values. */
+function createCharacter(name) {
+  const char = { name, roomId: 'pantheon' };
+  characters.set(name.toLowerCase(), char);
+  return char;
+}
+
+/** Persist a player's current state back to the character store. */
+function saveCharacterState(player) {
+  const char = characters.get(player.name.toLowerCase());
+  if (char) {
+    char.roomId = player.roomId;
+  }
+}
+
+function createPlayer(ws, name, roomId) {
   const id = nextId++;
   const player = {
     id,
-    name: `Wanderer${id}`,
-    roomId: 'pantheon',
+    name: name || `Wanderer${id}`,
+    roomId: roomId || 'pantheon',
     ws,
   };
   players.set(id, player);
@@ -46,4 +69,4 @@ function broadcast(text) {
   }
 }
 
-module.exports = { createPlayer, removePlayer, getPlayer, allPlayers, send, broadcast };
+module.exports = { createPlayer, removePlayer, getPlayer, allPlayers, send, broadcast, findCharacter, createCharacter, saveCharacterState };

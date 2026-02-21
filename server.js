@@ -60,14 +60,21 @@ function broadcast(text) {
   playerManager.broadcast(text);
 }
 
-wss.on('connection', ws => {
-  const player = playerManager.createPlayer(ws);
-  console.log(`[server] Player ${player.name} connected`);
+// Valid character names: 2–20 characters total (first must be a letter, followed by 1-19 letters/digits/_/-)
+const NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{1,19}$/;
 
-  // Welcome
-  sendRoom(player);
-  playerManager.send(player, `\nWelcome, ${player.name}. You have arrived in ${world.getRoom(player.roomId).name}.`);
-  playerManager.send(player, 'Type "help" for a list of commands.\n');
+/** Send a raw message to a WebSocket before a player object exists */
+function sendRaw(ws, text) {
+  if (ws.readyState === 1 /* OPEN */) {
+    ws.send(JSON.stringify({ type: 'message', text }));
+  }
+}
+
+wss.on('connection', ws => {
+  // Each connection starts in a pending state until a character is chosen
+  const session = { ws, state: 'awaiting_name', player: null };
+
+  sendRaw(ws, '\nWelcome to MudSeed!\nEnter your character name (2-20 characters, starting with a letter): ');
 
   ws.on('message', raw => {
     let input;
@@ -78,16 +85,56 @@ wss.on('connection', ws => {
       input = raw.toString().trim();
     }
     if (!input) return;
-    handleCommand(player, input);
+
+    if (session.state === 'awaiting_name') {
+      return handleNameInput(session, input);
+    }
+
+    handleCommand(session.player, input);
   });
 
   ws.on('close', () => {
-    console.log(`[server] Player ${player.name} disconnected`);
-    playerManager.removePlayer(player.id);
+    if (session.player) {
+      console.log(`[server] Player ${session.player.name} disconnected`);
+      playerManager.saveCharacterState(session.player);
+      playerManager.removePlayer(session.player.id);
+    }
   });
 
-  ws.on('error', err => console.error(`[server] WS error for ${player.name}:`, err.message));
+  ws.on('error', err => {
+    const label = session.player ? session.player.name : '(unauthenticated)';
+    console.error(`[server] WS error for ${label}:`, err.message);
+  });
 });
+
+/** Handle the character name input during the login/create flow */
+function handleNameInput(session, name) {
+  if (!NAME_PATTERN.test(name)) {
+    sendRaw(session.ws, 'Invalid name. Names must be 2-20 characters total, starting with a letter, followed by letters, digits, _ or -. Try again: ');
+    return;
+  }
+
+  const existing = playerManager.findCharacter(name);
+  if (existing) {
+    // Login — character already exists
+    const player = playerManager.createPlayer(session.ws, existing.name, existing.roomId);
+    session.player = player;
+    session.state = 'in_game';
+    console.log(`[server] Player ${player.name} logged in`);
+    playerManager.send(player, `\nWelcome back, ${player.name}!`);
+  } else {
+    // Create — new character
+    const char = playerManager.createCharacter(name);
+    const player = playerManager.createPlayer(session.ws, char.name, char.roomId);
+    session.player = player;
+    session.state = 'in_game';
+    console.log(`[server] Player ${player.name} created`);
+    playerManager.send(player, `\nWelcome, ${player.name}! Your character has been created.`);
+  }
+
+  sendRoom(session.player);
+  playerManager.send(session.player, 'Type "help" for a list of commands.\n');
+}
 
 // ── Command handler ───────────────────────────────────────────────────────────
 
