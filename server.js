@@ -72,7 +72,7 @@ function sendRaw(ws, text) {
 
 wss.on('connection', ws => {
   // Each connection starts in a pending state until a character is chosen
-  const session = { ws, state: 'awaiting_name', player: null };
+  const session = { ws, state: 'awaiting_name', player: null, pendingName: null, loginAttempts: 0 };
 
   sendRaw(ws, '\nWelcome to MudSeed!\nEnter your character name (2-20 characters, starting with a letter): ');
 
@@ -88,6 +88,14 @@ wss.on('connection', ws => {
 
     if (session.state === 'awaiting_name') {
       return handleNameInput(session, input);
+    }
+
+    if (session.state === 'awaiting_new_password' || session.state === 'awaiting_login_password') {
+      handlePasswordInput(session, input).catch(err => {
+        console.error('[server] Password handling error:', err.message);
+        ws.close();
+      });
+      return;
     }
 
     handleCommand(session.player, input);
@@ -116,20 +124,52 @@ function handleNameInput(session, name) {
 
   const existing = playerManager.findCharacter(name);
   if (existing) {
-    // Login — character already exists
-    const player = playerManager.createPlayer(session.ws, existing.name, existing.roomId);
-    session.player = player;
-    session.state = 'in_game';
-    console.log(`[server] Player ${player.name} logged in`);
-    playerManager.send(player, `\nWelcome back, ${player.name}!`);
+    session.pendingName = existing.name;
+    session.state = 'awaiting_login_password';
+    sendRaw(session.ws, 'Password: ');
   } else {
-    // Create — new character
-    const char = playerManager.createCharacter(name);
+    session.pendingName = name;
+    session.state = 'awaiting_new_password';
+    sendRaw(session.ws, 'Choose a password (min 8 characters): ');
+  }
+}
+
+const MIN_PASSWORD_LENGTH = 8;
+const MAX_LOGIN_ATTEMPTS = 3;
+
+/** Handle the password input for both new-character creation and login. */
+async function handlePasswordInput(session, password) {
+  if (session.state === 'awaiting_new_password') {
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      sendRaw(session.ws, `Password too short (min ${MIN_PASSWORD_LENGTH} characters). Try again: `);
+      return;
+    }
+    const char = playerManager.createCharacter(session.pendingName);
+    await playerManager.setPassword(session.pendingName, password);
     const player = playerManager.createPlayer(session.ws, char.name, char.roomId);
     session.player = player;
     session.state = 'in_game';
     console.log(`[server] Player ${player.name} created`);
     playerManager.send(player, `\nWelcome, ${player.name}! Your character has been created.`);
+  } else {
+    // awaiting_login_password
+    const ok = await playerManager.verifyPassword(session.pendingName, password);
+    if (!ok) {
+      session.loginAttempts++;
+      if (session.loginAttempts >= MAX_LOGIN_ATTEMPTS) {
+        sendRaw(session.ws, 'Too many failed attempts. Disconnecting.');
+        session.ws.close();
+        return;
+      }
+      sendRaw(session.ws, 'Incorrect password. Try again: ');
+      return;
+    }
+    const existing = playerManager.findCharacter(session.pendingName);
+    const player = playerManager.createPlayer(session.ws, existing.name, existing.roomId);
+    session.player = player;
+    session.state = 'in_game';
+    console.log(`[server] Player ${player.name} logged in`);
+    playerManager.send(player, `\nWelcome back, ${player.name}!`);
   }
 
   sendRoom(session.player);
