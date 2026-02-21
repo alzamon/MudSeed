@@ -90,7 +90,7 @@ wss.on('connection', ws => {
       return handleNameInput(session, input);
     }
 
-    if (session.state === 'awaiting_new_password' || session.state === 'awaiting_login_password') {
+    if (session.state === 'awaiting_new_password' || session.state === 'awaiting_new_password_confirm' || session.state === 'awaiting_login_password') {
       handlePasswordInput(session, input).catch(err => {
         console.error('[server] Password handling error:', err.message);
         ws.close();
@@ -144,8 +144,22 @@ async function handlePasswordInput(session, password) {
       sendRaw(session.ws, `Password too short (min ${MIN_PASSWORD_LENGTH} characters). Try again: `);
       return;
     }
+    session.pendingPassword = password;
+    session.state = 'awaiting_new_password_confirm';
+    sendRaw(session.ws, 'Confirm password: ');
+    return;
+  }
+
+  if (session.state === 'awaiting_new_password_confirm') {
+    if (password !== session.pendingPassword) {
+      session.pendingPassword = null;
+      session.state = 'awaiting_new_password';
+      sendRaw(session.ws, `Passwords do not match. Choose a password (min ${MIN_PASSWORD_LENGTH} characters): `);
+      return;
+    }
     const char = playerManager.createCharacter(session.pendingName);
-    await playerManager.setPassword(session.pendingName, password);
+    await playerManager.setPassword(session.pendingName, session.pendingPassword);
+    session.pendingPassword = null;
     const player = playerManager.createPlayer(session.ws, char.name, char.roomId);
     session.player = player;
     session.state = 'in_game';
