@@ -123,8 +123,8 @@ function handleNameInput(session, name) {
   }
 
   const existing = playerManager.findCharacter(name);
-  if (existing) {
-    session.pendingName = existing.name;
+  if (existing || playerManager.hasPassword(name)) {
+    session.pendingName = existing ? existing.name : name;
     session.state = 'awaiting_login_password';
     sendRaw(session.ws, 'Password: ');
   } else {
@@ -178,8 +178,8 @@ async function handlePasswordInput(session, password) {
       sendRaw(session.ws, 'Incorrect password. Try again: ');
       return;
     }
-    const existing = playerManager.findCharacter(session.pendingName);
-    const player = playerManager.createPlayer(session.ws, existing.name, existing.roomId);
+    const character = playerManager.findCharacter(session.pendingName) || playerManager.createCharacter(session.pendingName);
+    const player = playerManager.createPlayer(session.ws, character.name, character.roomId);
     session.player = player;
     session.state = 'in_game';
     console.log(`[server] Player ${player.name} logged in`);
