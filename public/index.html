@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MudSeed</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0d0d;
+      color: #c8c8b0;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 15px;
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+      overflow: hidden;
+    }
+
+    #header {
+      padding: 8px 16px;
+      background: #1a1a0e;
+      border-bottom: 1px solid #333;
+      color: #d4af37;
+      font-size: 18px;
+      letter-spacing: 2px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    #header span {
+      color: #888;
+      font-size: 12px;
+      display: block;
+      letter-spacing: 1px;
+      margin-top: 2px;
+    }
+
+    #output {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 20px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.6;
+    }
+
+    #output .god {
+      color: #8888ff;
+      font-style: italic;
+    }
+
+    #output .system {
+      color: #888;
+    }
+
+    #output .room-header {
+      color: #d4af37;
+      font-weight: bold;
+    }
+
+    #input-row {
+      display: flex;
+      border-top: 1px solid #333;
+      background: #111;
+      flex-shrink: 0;
+    }
+
+    #prompt {
+      padding: 10px 12px;
+      color: #d4af37;
+      user-select: none;
+    }
+
+    #input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #e8e8d0;
+      font-family: inherit;
+      font-size: inherit;
+      padding: 10px 0;
+    }
+
+    #status {
+      padding: 10px 12px;
+      font-size: 12px;
+      color: #555;
+    }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #111; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="header">
+    ✦ MUDSEED ✦
+    <span>a world shaped by gods</span>
+  </div>
+  <div id="output"></div>
+  <div id="input-row">
+    <div id="prompt">&gt;</div>
+    <input id="input" type="text" autocomplete="off" autocorrect="off" spellcheck="false" autofocus placeholder="enter command…" />
+    <div id="status">⬤ connecting…</div>
+  </div>
+
+  <script>
+    const output = document.getElementById('output');
+    const input = document.getElementById('input');
+    const status = document.getElementById('status');
+
+    const WS_URL = `ws://${location.host}`;
+    let ws;
+
+    function append(text, cls) {
+      const el = document.createElement('div');
+      if (cls) el.className = cls;
+      el.textContent = text;
+
+      // Style room headers inline
+      if (text.startsWith('===') && text.endsWith('===')) {
+        el.className = 'room-header';
+      } else if (text.startsWith('[') && (text.includes('speaks]') || text.includes('] '))) {
+        el.className = 'god';
+      }
+
+      output.appendChild(el);
+      output.scrollTop = output.scrollHeight;
+    }
+
+    function connect() {
+      ws = new WebSocket(WS_URL);
+
+      ws.addEventListener('open', () => {
+        status.textContent = '⬤ connected';
+        status.style.color = '#5c5';
+      });
+
+      ws.addEventListener('message', ev => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'message') {
+            const lines = msg.text.split('\n');
+            for (const line of lines) append(line);
+          }
+        } catch {
+          append(ev.data);
+        }
+      });
+
+      ws.addEventListener('close', () => {
+        status.textContent = '⬤ disconnected';
+        status.style.color = '#c55';
+        append('--- Connection closed. Refresh to reconnect. ---', 'system');
+      });
+
+      ws.addEventListener('error', () => {
+        status.textContent = '⬤ error';
+        status.style.color = '#c55';
+      });
+    }
+
+    input.addEventListener('keydown', ev => {
+      if (ev.key !== 'Enter') return;
+      const text = input.value.trim();
+      input.value = '';
+      if (!text) return;
+      append(`> ${text}`, 'system');
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ text }));
+      }
+    });
+
+    connect();
+  </script>
+</body>
+</html>
