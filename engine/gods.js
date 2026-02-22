@@ -7,8 +7,10 @@
  * The frontmatter (YAML between ---) defines configuration.
  * The body is injected into the LLM system prompt as the god's lore/personality.
  *
- * Gods act on a tick_interval. On each tick they receive a snapshot of the
- * world and return a JSON action (or null to do nothing).
+ * Gods are invoked in response to world events rather than on a fixed timer.
+ * Every EVENTS_PER_CHECK world events a scheduler LLM reviews the last N events
+ * and returns a probability (0–1) for each god. Each god is then invoked with
+ * that probability.
  *
  * LLM integration is opt-in: set the god's api_key_env environment variable.
  * Without a key, gods run in MOCK mode and demonstrate actions automatically.
@@ -23,7 +25,11 @@ const playerManager = require('./player');
 const GODS_DIR = path.join(__dirname, '..', 'gods');
 
 const gods = new Map(); // name -> god config
-const timers = new Map(); // name -> interval handle
+
+/** Number of world events between god-scheduling checks */
+const EVENTS_PER_CHECK = 5;
+let _broadcastFn = null;
+let _eventsSinceCheck = 0;
 
 /**
  * Parse minimal YAML frontmatter.
@@ -79,20 +85,31 @@ function loadGods() {
   }
 }
 
-/** Start all god timers */
+/** Start the god system, registering the broadcast function */
 function startGods(broadcastFn) {
+  _broadcastFn = broadcastFn;
+  _eventsSinceCheck = 0;
   for (const [name, god] of gods.entries()) {
-    const interval = parseInt(god.tick_interval, 10) || 60;
-    console.log(`[gods] ${name} will act every ${interval}s`);
-    const handle = setInterval(() => godTick(god, broadcastFn), interval * 1000);
-    timers.set(name, handle);
+    console.log(`[gods] ${name} (domain: ${god.domain}) is watching the world`);
   }
 }
 
-/** Stop all god timers */
+/** Stop the god system */
 function stopGods() {
-  for (const handle of timers.values()) clearInterval(handle);
-  timers.clear();
+  _broadcastFn = null;
+}
+
+/**
+ * Called whenever a world event occurs.
+ * Every EVENTS_PER_CHECK events, a scheduler LLM (or mock) determines the
+ * probability of each god acting, then invokes eligible gods.
+ */
+async function onWorldEvent(snap) {
+  if (!_broadcastFn || gods.size === 0) return;
+  _eventsSinceCheck++;
+  if (_eventsSinceCheck < EVENTS_PER_CHECK) return;
+  _eventsSinceCheck = 0;
+  await scheduleGods(snap);
 }
 
 /** One god tick: build context, call LLM (or mock), apply action */
@@ -110,6 +127,108 @@ async function godTick(god, broadcastFn) {
   } catch (err) {
     console.error(`[${god.name}] tick error:`, err.message);
   }
+}
+
+/**
+ * Determine which gods should act based on recent events, then invoke them.
+ */
+async function scheduleGods(snap) {
+  const godList = [...gods.values()];
+  const probabilities = await getGodProbabilities(godList, snap);
+  for (const god of godList) {
+    const prob = probabilities[god.name] ?? 0;
+    if (Math.random() < prob) {
+      await godTick(god, _broadcastFn);
+    }
+  }
+}
+
+/**
+ * Return a probability (0–1) for each god to act, based on recent events.
+ * Uses the scheduler LLM if an API key is available, otherwise uses mock logic.
+ */
+async function getGodProbabilities(godList, snap) {
+  let apiKey = null;
+  for (const god of godList) {
+    if (god.api_key_env) {
+      const key = process.env[god.api_key_env];
+      if (key) { apiKey = key; break; }
+    }
+  }
+  if (!apiKey) {
+    return getMockProbabilities(godList, snap);
+  }
+  try {
+    return await callSchedulerLLM(apiKey, godList, snap);
+  } catch (err) {
+    console.error('[gods] Scheduler LLM error:', err.message);
+    return getMockProbabilities(godList, snap);
+  }
+}
+
+/**
+ * Call the LLM to assign an invocation probability (0–1) to each god based
+ * on the last N world events.
+ */
+function callSchedulerLLM(apiKey, godList, snap) {
+  return new Promise((resolve, reject) => {
+    const model = godList[0]?.llm_model || 'gpt-4o';
+    const systemPrompt = [
+      'You are the cosmic scheduler of gods.',
+      'You observe recent world events and decide how likely each god is to act right now.',
+      `Gods available: ${godList.map(g => `${g.name} (domain: ${g.domain})`).join(', ')}`,
+      'Respond with a single JSON object mapping each god\'s name to a probability between 0 and 1.',
+      'Base probabilities on whether recent events are relevant to each god\'s domain.',
+      `Example: {${godList.map(g => `"${g.name}": 0.5`).join(', ')}}`,
+      'Respond ONLY with the JSON object, no markdown fences.',
+    ].join('\n');
+    const userPrompt = [
+      `Recent world events (last ${snap.recentEvents.length}):`,
+      JSON.stringify(snap.recentEvents, null, 2),
+      '',
+      `Assign an invocation probability to each god: ${godList.map(g => g.name).join(', ')}`,
+    ].join('\n');
+
+    const body = JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.5,
+      max_tokens: 100,
+    });
+
+    const req = https.request(
+      {
+        hostname: 'api.openai.com',
+        path: '/v1/chat/completions',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Length': Buffer.byteLength(body),
+        },
+      },
+      res => {
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.error) return reject(new Error(parsed.error.message));
+            const text = parsed.choices[0].message.content.trim();
+            resolve(JSON.parse(text));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
 }
 
 /**
@@ -169,6 +288,7 @@ function buildUserPrompt(snap) {
           items: r.items,
           npcs: r.npcs,
         })),
+        recentEvents: snap.recentEvents,
         recentGodLog: snap.recentGodLog,
       },
       null,
@@ -231,6 +351,21 @@ function callOpenAI(apiKey, model, systemPrompt, userPrompt) {
  * Each god has a small scripted sequence of initial actions.
  */
 const mockState = {};
+
+/**
+ * Return mock probabilities: gods with remaining scripted actions get 1.0,
+ * gods that have exhausted their sequence get 0.
+ */
+function getMockProbabilities(godList, _snap) {
+  const result = {};
+  for (const god of godList) {
+    if (!mockState[god.name]) mockState[god.name] = 0;
+    const step = mockState[god.name];
+    const actions = getMockSequence(god.name);
+    result[god.name] = step < actions.length ? 1.0 : 0;
+  }
+  return result;
+}
 
 function getMockAction(god, snap) {
   const key = god.name;
@@ -351,4 +486,4 @@ function getMockSequence(godName, snap) {
   }
 }
 
-module.exports = { loadGods, startGods, stopGods, gods };
+module.exports = { loadGods, startGods, stopGods, onWorldEvent, gods };

@@ -105,6 +105,7 @@ wss.on('connection', ws => {
     if (session.player) {
       console.log(`[server] Player ${session.player.name} disconnected`);
       world.addPlayerEvent('disconnect', session.player.name, { roomId: session.player.roomId });
+      godEngine.onWorldEvent(world.snapshot()).catch(err => console.error('[gods] onWorldEvent error:', err.message));
       playerManager.broadcastToRoom(session.player.roomId, `${session.player.name} has left the world.`, session.player.id);
       playerManager.saveCharacterState(session.player);
       playerManager.removePlayer(session.player.id);
@@ -167,6 +168,7 @@ async function handlePasswordInput(session, password) {
     session.state = 'in_game';
     console.log(`[server] Player ${player.name} created`);
     world.addPlayerEvent('connect', player.name, { roomId: player.roomId });
+    godEngine.onWorldEvent(world.snapshot()).catch(err => console.error('[gods] onWorldEvent error:', err.message));
     playerManager.broadcastToRoom(player.roomId, `${player.name} has entered the world.`, player.id);
     playerManager.send(player, `\nWelcome, ${player.name}! Your character has been created.`);
   } else {
@@ -188,6 +190,7 @@ async function handlePasswordInput(session, password) {
     session.state = 'in_game';
     console.log(`[server] Player ${player.name} logged in`);
     world.addPlayerEvent('connect', player.name, { roomId: player.roomId });
+    godEngine.onWorldEvent(world.snapshot()).catch(err => console.error('[gods] onWorldEvent error:', err.message));
     playerManager.broadcastToRoom(player.roomId, `${player.name} has entered the world.`, player.id);
     playerManager.send(player, `\nWelcome back, ${player.name}!`);
   }
@@ -326,6 +329,7 @@ function cmdMove(player, direction) {
   const fromLabel = ARRIVAL_FROM[direction] || 'somewhere';
   playerManager.broadcastToRoom(targetId, `${player.name} arrives from the ${fromLabel}.`, player.id);
   world.addPlayerEvent('move', player.name, { from: fromId, direction, to: targetId });
+  godEngine.onWorldEvent(world.snapshot()).catch(err => console.error('[gods] onWorldEvent error:', err.message));
   sendRoom(player);
 }
 
@@ -372,6 +376,7 @@ function cmdSay(player, msg) {
   playerManager.broadcastToRoom(player.roomId, line, player.id);
   playerManager.send(player, `You say: "${msg}"`);
   world.addPlayerEvent('say', player.name, { roomId: player.roomId, msg });
+  godEngine.onWorldEvent(world.snapshot()).catch(err => console.error('[gods] onWorldEvent error:', err.message));
 }
 
 function cmdShout(player, msg) {
@@ -381,10 +386,11 @@ function cmdShout(player, msg) {
   }
   playerManager.broadcast(`${player.name} shouts: "${msg}"`);
   world.addPlayerEvent('shout', player.name, { msg });
+  godEngine.onWorldEvent(world.snapshot()).catch(err => console.error('[gods] onWorldEvent error:', err.message));
 }
 
 function cmdGods(player) {
-  const list = [...godEngine.gods.entries()].map(([name, g]) => `  ${name} — god of ${g.domain} (tick: ${g.tick_interval}s)`);
+  const list = [...godEngine.gods.entries()].map(([name, g]) => `  ${name} — god of ${g.domain}`);
   playerManager.send(player, list.length ? `Active gods:\n${list.join('\n')}` : 'No gods are active.');
 }
 
