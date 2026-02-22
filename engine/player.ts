@@ -7,10 +7,11 @@
  * incompatible and will need to be reset.
  */
 
-import { join } from "./path.ts";
+import { join, parseDataFile, toDataFile } from "./path.ts";
 
 const __dirname = import.meta.dirname!;
 const PASSWORDS_FILE = join(__dirname, "..", "data", "passwords.json");
+const CHARACTERS_DIR = join(__dirname, "..", "world", "characters");
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -21,7 +22,7 @@ export interface Player {
   ws: WebSocket;
 }
 
-interface Character {
+export interface Character {
   name: string;
   roomId: string;
 }
@@ -138,6 +139,87 @@ export function hasPassword(name: string): boolean {
 // Load persisted passwords on startup
 loadPasswords();
 
+// ── Character persistence ─────────────────────────────────────────────────────
+
+function ensureCharactersDir(): void {
+  try {
+    Deno.statSync(CHARACTERS_DIR);
+  } catch {
+    Deno.mkdirSync(CHARACTERS_DIR, { recursive: true });
+  }
+}
+
+/** Load all persisted characters from TypeScript data files into memory */
+function loadCharacters(): void {
+  ensureCharactersDir();
+  const files = [...Deno.readDirSync(CHARACTERS_DIR)]
+    .filter((e) => e.isFile && e.name.endsWith(".ts"))
+    .map((e) => e.name);
+  for (const file of files) {
+    try {
+      const char = parseDataFile<Character>(Deno.readTextFileSync(join(CHARACTERS_DIR, file)));
+      characters.set(char.name.toLowerCase(), char);
+    } catch (err) {
+      console.error("[player] Failed to load character file:", file, (err as Error).message);
+    }
+  }
+}
+
+/** Persist a character as a TypeScript data file */
+function saveCharacter(char: Character): void {
+  ensureCharactersDir();
+  const file = join(CHARACTERS_DIR, `${char.name.toLowerCase()}.ts`);
+  Deno.writeTextFileSync(file, toDataFile(char));
+}
+
+// Load persisted characters on startup
+loadCharacters();
+
+/**
+ * Watch the characters directory and hot-reload files when they change on disk.
+ * If the character is currently online, their in-memory position is left
+ * unchanged (the live player.roomId is authoritative); all other fields update.
+ */
+export function watchCharacters(): void {
+  async function watch(): Promise<void> {
+    ensureCharactersDir();
+    const timers = new Map<string, number>();
+    const watcher = Deno.watchFs(CHARACTERS_DIR);
+    for await (const event of watcher) {
+      if (event.kind !== "modify" && event.kind !== "create") continue;
+      for (const path of event.paths) {
+        if (!path.endsWith(".ts")) continue;
+        const existing = timers.get(path);
+        if (existing) clearTimeout(existing);
+        timers.set(path, setTimeout(() => {
+          timers.delete(path);
+          let text: string;
+          try {
+            text = Deno.readTextFileSync(path);
+          } catch {
+            return;
+          }
+          try {
+            const char = parseDataFile<Character>(text);
+            const key = char.name.toLowerCase();
+            // If the character is currently online, preserve their live roomId
+            const onlinePlayer = [...players.values()].find(
+              (p) => p.name.toLowerCase() === key,
+            );
+            if (onlinePlayer) char.roomId = onlinePlayer.roomId;
+            characters.set(key, char);
+            console.log(`[player] Hot-reloaded character: ${char.name}`);
+          } catch (err) {
+            console.error(`[player] Failed to reload ${path}:`, (err as Error).message);
+          }
+        }, 50));
+      }
+    }
+  }
+
+  watch().catch((err) => console.error("[player] Character watcher error:", (err as Error).message));
+}
+
 // ── Character management ──────────────────────────────────────────────────────
 
 /** Find a character by name (case-insensitive). Returns character data or null. */
@@ -149,6 +231,7 @@ export function findCharacter(name: string): Character | null {
 export function createCharacter(name: string): Character {
   const char: Character = { name, roomId: "pantheon" };
   characters.set(name.toLowerCase(), char);
+  saveCharacter(char);
   return char;
 }
 
@@ -157,6 +240,7 @@ export function saveCharacterState(player: Player): void {
   const char = characters.get(player.name.toLowerCase());
   if (char) {
     char.roomId = player.roomId;
+    saveCharacter(char);
   }
 }
 

@@ -28,3 +28,22 @@ export function extname(path: string): string {
   const dot = base.lastIndexOf(".");
   return dot <= 0 ? "" : base.slice(dot);
 }
+
+/**
+ * Parse a TypeScript data file written by `toDataFile`.
+ * Files are always in the form: export default <json>;\n
+ */
+export function parseDataFile<T>(text: string): T {
+  const prefix = "export default ";
+  const trimmed = text.trim();
+  if (!trimmed.startsWith(prefix)) {
+    throw new Error("Invalid data file format: missing 'export default' prefix");
+  }
+  const jsonStr = trimmed.slice(prefix.length).replace(/;$/, "");
+  return JSON.parse(jsonStr) as T;
+}
+
+/** Serialize data as a TypeScript data file */
+export function toDataFile(data: unknown): string {
+  return `export default ${JSON.stringify(data, null, 2)};\n`;
+}

@@ -2,5 +2,6 @@ node_modules/
 npm-debug.log*
 .env
 data/
+world/characters/
 # Deno cache (optional - can be committed for reproducibility)
 .deno/
