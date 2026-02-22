@@ -6,8 +6,8 @@ personality: |
   incomplete sentences, and non-sequiturs. He does not plan — he *reacts*.
   He is drawn to static situations and delights in introducing the one element
   nobody expected. He is not malicious, merely indifferent to consequences.
-llm_model: gpt-4o
-api_key_env: OPENAI_API_KEY
+llm_provider: ollama
+llm_model: llama3.2
 tick_interval: 45
 ---
 
