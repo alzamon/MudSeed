@@ -34,6 +34,8 @@ world.loadRooms();
 world.loadItems();
 world.loadNpcs();
 godEngine.loadGods();
+world.watchDataFiles();
+playerManager.watchCharacters();
 
 // ── MIME types ────────────────────────────────────────────────────────────────
 

@@ -168,6 +168,73 @@ export function listRooms(): string[] {
   return Object.keys(state.rooms);
 }
 
+// ── Hot-reload watcher ────────────────────────────────────────────────────────
+
+const _watchers: Deno.FsWatcher[] = [];
+
+/**
+ * Watch world data directories and hot-reload files when they change on disk.
+ * This allows hand-editing rooms, items, and NPCs without restarting the server.
+ * Changes take effect immediately while connected players continue playing.
+ */
+export function watchDataFiles(): void {
+  async function watchDir(
+    dir: string,
+    reload: (text: string) => void,
+  ): Promise<void> {
+    // Debounce per path — editors often emit multiple events per save
+    const timers = new Map<string, number>();
+    const watcher = Deno.watchFs(dir);
+    _watchers.push(watcher);
+    for await (const event of watcher) {
+      if (event.kind !== "modify" && event.kind !== "create") continue;
+      for (const path of event.paths) {
+        if (!path.endsWith(".ts")) continue;
+        const existing = timers.get(path);
+        if (existing) clearTimeout(existing);
+        timers.set(path, setTimeout(() => {
+          timers.delete(path);
+          let text: string;
+          try {
+            text = Deno.readTextFileSync(path);
+          } catch {
+            return; // file deleted or temporarily unreadable — leave state as-is
+          }
+          try {
+            reload(text);
+          } catch (err) {
+            console.error(`[world] Failed to reload ${path}:`, (err as Error).message);
+          }
+        }, 50));
+      }
+    }
+  }
+
+  watchDir(ROOMS_DIR, (text) => {
+    const room = parseDataFile<Room>(text);
+    state.rooms[room.id] = room;
+    console.log(`[world] Hot-reloaded room: ${room.id}`);
+  }).catch((err) => console.error("[world] Room watcher error:", (err as Error).message));
+
+  watchDir(ITEMS_DIR, (text) => {
+    const item = parseDataFile<Item>(text);
+    state.items[item.id] = item;
+    console.log(`[world] Hot-reloaded item: ${item.id}`);
+  }).catch((err) => console.error("[world] Item watcher error:", (err as Error).message));
+
+  watchDir(NPCS_DIR, (text) => {
+    const npc = parseDataFile<NPC>(text);
+    state.npcs[npc.id] = npc;
+    console.log(`[world] Hot-reloaded NPC: ${npc.id}`);
+  }).catch((err) => console.error("[world] NPC watcher error:", (err as Error).message));
+}
+
+/** Stop all active file watchers */
+export function stopWatching(): void {
+  for (const w of _watchers) w.close();
+  _watchers.length = 0;
+}
+
 // ── Action dispatch ───────────────────────────────────────────────────────────
 
 /**

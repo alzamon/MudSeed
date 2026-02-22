@@ -175,6 +175,51 @@ function saveCharacter(char: Character): void {
 // Load persisted characters on startup
 loadCharacters();
 
+/**
+ * Watch the characters directory and hot-reload files when they change on disk.
+ * If the character is currently online, their in-memory position is left
+ * unchanged (the live player.roomId is authoritative); all other fields update.
+ */
+export function watchCharacters(): void {
+  async function watch(): Promise<void> {
+    ensureCharactersDir();
+    const timers = new Map<string, number>();
+    const watcher = Deno.watchFs(CHARACTERS_DIR);
+    for await (const event of watcher) {
+      if (event.kind !== "modify" && event.kind !== "create") continue;
+      for (const path of event.paths) {
+        if (!path.endsWith(".ts")) continue;
+        const existing = timers.get(path);
+        if (existing) clearTimeout(existing);
+        timers.set(path, setTimeout(() => {
+          timers.delete(path);
+          let text: string;
+          try {
+            text = Deno.readTextFileSync(path);
+          } catch {
+            return;
+          }
+          try {
+            const char = parseDataFile<Character>(text);
+            const key = char.name.toLowerCase();
+            // If the character is currently online, preserve their live roomId
+            const onlinePlayer = [...players.values()].find(
+              (p) => p.name.toLowerCase() === key,
+            );
+            if (onlinePlayer) char.roomId = onlinePlayer.roomId;
+            characters.set(key, char);
+            console.log(`[player] Hot-reloaded character: ${char.name}`);
+          } catch (err) {
+            console.error(`[player] Failed to reload ${path}:`, (err as Error).message);
+          }
+        }, 50));
+      }
+    }
+  }
+
+  watch().catch((err) => console.error("[player] Character watcher error:", (err as Error).message));
+}
+
 // ── Character management ──────────────────────────────────────────────────────
 
 /** Find a character by name (case-insensitive). Returns character data or null. */
