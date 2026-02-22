@@ -7,7 +7,8 @@ export default {
     "down": "unmade-place"
   },
   "items": [
-    "whispering-coin"
+    "whispering-coin",
+    "wand-of-fireballs"
   ],
   "npcs": [
     "stone-sparrow"

@@ -26,6 +26,7 @@ export interface Item {
   id: string;
   name: string;
   description: string;
+  properties?: Record<string, unknown>;
   created_by?: string;
 }
 
@@ -60,7 +61,8 @@ export interface WorldState {
 export type GodAction =
   | { type: "create_room"; id: string; name: string; description: string; from_room?: string; direction?: string }
   | { type: "describe_room"; id: string; description: string }
-  | { type: "create_item"; id: string; name: string; description?: string; room_id?: string }
+  | { type: "create_item"; id: string; name: string; description?: string; room_id?: string; properties?: Record<string, unknown> }
+  | { type: "update_item"; id: string; properties: Record<string, unknown> }
   | { type: "create_npc"; id: string; name: string; description?: string; room_id?: string }
   | { type: "create_event"; text: string }
   | { type: "add_exit"; from_room: string; direction: string; to_room: string }
@@ -181,6 +183,8 @@ export function applyAction(action: GodAction, godName: string): ActionResult {
       return describeRoom(action, godName);
     case "create_item":
       return createItem(action, godName);
+    case "update_item":
+      return updateItem(action, godName);
     case "create_npc":
       return createNpc(action, godName);
     case "create_event":
@@ -255,9 +259,10 @@ function createItem(
   action: Extract<GodAction, { type: "create_item" }>,
   godName: string,
 ): ActionResult {
-  const { id, name, description, room_id } = action;
+  const { id, name, description, room_id, properties } = action;
   if (!id || !name) return { ok: false, message: "create_item requires id and name" };
   const item: Item = { id, name, description: description ?? "", created_by: godName };
+  if (properties) item.properties = properties;
   state.items[id] = item;
   if (room_id && state.rooms[room_id]) {
     state.rooms[room_id].items.push(id);
@@ -270,6 +275,21 @@ function createItem(
     message: `Item '${name}' created`,
     broadcast: `[${godName}] places "${name}" into the world.`,
   };
+}
+
+function updateItem(
+  action: Extract<GodAction, { type: "update_item" }>,
+  godName: string,
+): ActionResult {
+  const { id, properties } = action;
+  const item = state.items[id];
+  if (!item) return { ok: false, message: `Item '${id}' not found` };
+  // Shallow merge: each key in `properties` replaces the same key on the item.
+  // To clear a property, set its value to null.
+  item.properties = { ...(item.properties ?? {}), ...properties };
+  saveItem(item);
+  logGodAction(godName, `Updated item '${id}' properties: ${JSON.stringify(properties)}`);
+  return { ok: true, message: `Item '${id}' updated` };
 }
 
 function createNpc(

@@ -400,7 +400,14 @@ function cmdExamine(player: Player, target: string): void {
   for (const itemId of (room.items ?? [])) {
     const item = world.state.items[itemId];
     if (item && item.name.toLowerCase().includes(target)) {
-      playerManager.send(player, `${item.name}: ${item.description}`);
+      let text = `${item.name}: ${item.description}`;
+      if (item.properties && Object.keys(item.properties).length) {
+        const props = Object.entries(item.properties)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(", ");
+        text += ` [${props}]`;
+      }
+      playerManager.send(player, text);
       return;
     }
   }
