@@ -277,6 +277,8 @@ function handleCommand(player, raw) {
 
     default:
       playerManager.send(player, `Unknown command: "${cmd}". Type "help" for a list of commands.`);
+      world.addPlayerEvent('illegal_command', player.name, { cmd, roomId: player.roomId });
+      godEngine.onWorldEvent(world.snapshot()).catch(err => console.error('[gods] onWorldEvent error:', err.message));
   }
 }
 
@@ -430,6 +432,8 @@ function cmdLedger(player) {
       lines.push(`[${time}] ${e.player} entered the world in ${roomName(e.roomId)}`);
     } else if (e.type === 'disconnect') {
       lines.push(`[${time}] ${e.player} left the world from ${roomName(e.roomId)}`);
+    } else if (e.type === 'illegal_command') {
+      lines.push(`[${time}] ${e.player} tried unknown command "${e.cmd}" in ${roomName(e.roomId)}`);
     } else {
       lines.push(`[${time}] [${e.type}] ${JSON.stringify(e)}`);
     }
