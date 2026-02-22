@@ -30,6 +30,20 @@ export interface Item {
   created_by?: string;
 }
 
+export type WearSlot = "head" | "body" | "hands" | "feet" | "neck" | "ring" | "shield";
+
+export interface WearableItem extends Item {
+  wearable: true;
+  slot: WearSlot;
+  defense?: number;
+}
+
+export interface WieldableItem extends Item {
+  wieldable: true;
+  damage?: string;
+  hands?: 1 | 2;
+}
+
 export interface NPC {
   id: string;
   name: string;
@@ -111,7 +125,7 @@ export function loadRooms(): void {
 }
 
 /** Persist a single room as a TypeScript data file */
-function saveRoom(room: Room): void {
+export function saveRoom(room: Room): void {
   const file = join(ROOMS_DIR, `${room.id}.ts`);
   Deno.writeTextFileSync(file, toDataFile(room));
 }
