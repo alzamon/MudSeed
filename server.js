@@ -4,15 +4,19 @@
  * MudSeed — HTTP + WebSocket game server.
  *
  * Usage:
- *   node server.js [--port 3000]
+ *   node server.js [--port 3000] [--lan]
  *
  * The server serves a browser client at http://localhost:<port>/
  * and accepts WebSocket connections from the terminal client (client.js)
  * or the browser.
+ *
+ * Pass --lan to bind on all interfaces (0.0.0.0) so players on your local
+ * network can connect.  Without --lan the server listens on 127.0.0.1 only.
  */
 
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 
@@ -23,7 +27,19 @@ const godEngine = require('./engine/gods');
 // ── Configuration ─────────────────────────────────────────────────────────────
 
 const PORT = parseInt(process.env.PORT || process.argv.find((a, i, arr) => arr[i - 1] === '--port') || '3000', 10);
+const LAN = process.argv.includes('--lan');
+const HOST = LAN ? '0.0.0.0' : '127.0.0.1';
 const PUBLIC_DIR = path.join(__dirname, 'public');
+
+/** Return the first non-internal IPv4 address, or undefined. */
+function getLanIp() {
+  for (const ifaceList of Object.values(os.networkInterfaces())) {
+    for (const iface of ifaceList) {
+      if (iface.family === 'IPv4' && !iface.internal) return iface.address;
+    }
+  }
+  return undefined;
+}
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
@@ -452,8 +468,12 @@ function cmdHelp(player) {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   console.log(`[server] MudSeed running at http://localhost:${PORT}`);
+  if (LAN) {
+    const lanIp = getLanIp();
+    if (lanIp) console.log(`[server] LAN access:           http://${lanIp}:${PORT}`);
+  }
   console.log(`[server] Terminal client: node client.js [--host localhost] [--port ${PORT}]`);
   godEngine.startGods(broadcast);
 });
