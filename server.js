@@ -104,6 +104,8 @@ wss.on('connection', ws => {
   ws.on('close', () => {
     if (session.player) {
       console.log(`[server] Player ${session.player.name} disconnected`);
+      world.addPlayerEvent('disconnect', session.player.name, { roomId: session.player.roomId });
+      playerManager.broadcastToRoom(session.player.roomId, `${session.player.name} has left the world.`, session.player.id);
       playerManager.saveCharacterState(session.player);
       playerManager.removePlayer(session.player.id);
     }
@@ -164,6 +166,8 @@ async function handlePasswordInput(session, password) {
     session.player = player;
     session.state = 'in_game';
     console.log(`[server] Player ${player.name} created`);
+    world.addPlayerEvent('connect', player.name, { roomId: player.roomId });
+    playerManager.broadcastToRoom(player.roomId, `${player.name} has entered the world.`, player.id);
     playerManager.send(player, `\nWelcome, ${player.name}! Your character has been created.`);
   } else {
     // awaiting_login_password
@@ -183,6 +187,8 @@ async function handlePasswordInput(session, password) {
     session.player = player;
     session.state = 'in_game';
     console.log(`[server] Player ${player.name} logged in`);
+    world.addPlayerEvent('connect', player.name, { roomId: player.roomId });
+    playerManager.broadcastToRoom(player.roomId, `${player.name} has entered the world.`, player.id);
     playerManager.send(player, `\nWelcome back, ${player.name}!`);
   }
 
@@ -232,11 +238,19 @@ function handleCommand(player, raw) {
       return cmdSay(player, msg);
     }
 
+    case 'shout': {
+      const msg = raw.slice(6).trim();
+      return cmdShout(player, msg);
+    }
+
     case 'gods':
       return cmdGods(player);
 
     case 'world':
       return cmdWorld(player);
+
+    case 'ledger':
+      return cmdLedger(player);
 
     case 'help':
     case '?':
@@ -277,9 +291,18 @@ function sendRoom(player) {
     lines.push(`NPCs: ${names.join(', ')}`);
   }
 
+  // Other players
+  const others = playerManager.playersInRoom(player.roomId).filter(p => p.id !== player.id);
+  if (others.length) {
+    lines.push(`Players here: ${others.map(p => p.name).join(', ')}`);
+  }
+
   lines.push('');
   playerManager.send(player, lines.join('\n'));
 }
+
+// Maps movement direction to the label used in arrival announcements
+const ARRIVAL_FROM = { north: 'south', south: 'north', east: 'west', west: 'east', up: 'below', down: 'above' };
 
 function cmdMove(player, direction) {
   if (!direction) {
@@ -297,7 +320,12 @@ function cmdMove(player, direction) {
     playerManager.send(player, `That passage leads nowhere. The gods must have forgotten to finish it.`);
     return;
   }
+  const fromId = player.roomId;
+  playerManager.broadcastToRoom(fromId, `${player.name} leaves ${direction}.`, player.id);
   player.roomId = targetId;
+  const fromLabel = ARRIVAL_FROM[direction] || 'somewhere';
+  playerManager.broadcastToRoom(targetId, `${player.name} arrives from the ${fromLabel}.`, player.id);
+  world.addPlayerEvent('move', player.name, { from: fromId, direction, to: targetId });
   sendRoom(player);
 }
 
@@ -340,12 +368,52 @@ function cmdSay(player, msg) {
     playerManager.send(player, 'Say what?');
     return;
   }
-  playerManager.broadcast(`${player.name} says: "${msg}"`);
+  const line = `${player.name} says: "${msg}"`;
+  playerManager.broadcastToRoom(player.roomId, line, player.id);
+  playerManager.send(player, `You say: "${msg}"`);
+  world.addPlayerEvent('say', player.name, { roomId: player.roomId, msg });
+}
+
+function cmdShout(player, msg) {
+  if (!msg) {
+    playerManager.send(player, 'Shout what?');
+    return;
+  }
+  playerManager.broadcast(`${player.name} shouts: "${msg}"`);
+  world.addPlayerEvent('shout', player.name, { msg });
 }
 
 function cmdGods(player) {
   const list = [...godEngine.gods.entries()].map(([name, g]) => `  ${name} — god of ${g.domain} (tick: ${g.tick_interval}s)`);
   playerManager.send(player, list.length ? `Active gods:\n${list.join('\n')}` : 'No gods are active.');
+}
+
+function cmdLedger(player) {
+  const entries = world.getLedger(20);
+  if (!entries.length) {
+    playerManager.send(player, 'The ledger is empty.');
+    return;
+  }
+  const lines = ['', 'Recent Events (Ledger of Truth)', '────────────────────────────────'];
+  for (const e of entries) {
+    const time = new Date(e.at).toISOString().slice(0, 19).replace('T', ' ');
+    const roomName = id => (world.getRoom(id) || {}).name || id;
+    if (e.type === 'move') {
+      lines.push(`[${time}] ${e.player} moved ${e.direction} (${roomName(e.from)} → ${roomName(e.to)})`);
+    } else if (e.type === 'say') {
+      lines.push(`[${time}] ${e.player} says (in ${roomName(e.roomId)}): "${e.msg}"`);
+    } else if (e.type === 'shout') {
+      lines.push(`[${time}] ${e.player} shouts: "${e.msg}"`);
+    } else if (e.type === 'connect') {
+      lines.push(`[${time}] ${e.player} entered the world in ${roomName(e.roomId)}`);
+    } else if (e.type === 'disconnect') {
+      lines.push(`[${time}] ${e.player} left the world from ${roomName(e.roomId)}`);
+    } else {
+      lines.push(`[${time}] [${e.type}] ${JSON.stringify(e)}`);
+    }
+  }
+  lines.push('');
+  playerManager.send(player, lines.join('\n'));
 }
 
 function cmdWorld(player) {
@@ -365,8 +433,10 @@ function cmdHelp(player) {
     'north/south/...   — move in a direction (or n/s/e/w/u/d)',
     'go <direction>    — move in a direction',
     'examine <thing>   — examine an item or NPC',
-    'say <message>     — speak to everyone online',
+    'say <message>     — speak to players in your room',
+    'shout <message>   — shout to all players everywhere',
     'who               — list connected players',
+    'ledger            — show recent event history',
     'gods              — list active god agents',
     'world             — list all known rooms',
     'help / ?          — show this help',
