@@ -2,11 +2,14 @@
  * MudSeed — HTTP + WebSocket game server.
  *
  * Usage:
- *   deno run --allow-net --allow-read --allow-write --allow-env server.ts [--port 3000]
+ *   deno run --allow-net --allow-read --allow-write --allow-env --allow-sys server.ts [--port 3000] [--lan]
  *
  * The server serves a browser client at http://localhost:<port>/
  * and accepts WebSocket connections from the terminal client (client.ts)
  * or the browser.
+ *
+ * Pass --lan to bind on all interfaces (0.0.0.0) so players on your local
+ * network can connect.  Without --lan the server listens on 127.0.0.1 only.
  */
 
 import { extname, join } from "./engine/path.ts";
@@ -27,7 +30,25 @@ const PORT = parseInt(
     (portArgIdx !== -1 && args[portArgIdx + 1] ? args[portArgIdx + 1] : "3000"),
   10,
 );
+const LAN = args.includes("--lan");
+const HOST = LAN ? "0.0.0.0" : "127.0.0.1";
 const PUBLIC_DIR = join(__dirname, "public");
+
+/** Return the first non-loopback IPv4 address, or undefined.
+ *  Note: Deno.NetworkInterfaceInfo has no `internal` flag, so we
+ *  filter by address prefix instead. */
+function getLanIp(): string | undefined {
+  try {
+    for (const iface of Deno.networkInterfaces()) {
+      if (iface.family === "IPv4" && !iface.address.startsWith("127.")) {
+        return iface.address;
+      }
+    }
+  } catch {
+    // --allow-sys not granted; silently skip
+  }
+  return undefined;
+}
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
@@ -764,9 +785,13 @@ function cmdHelp(player: Player): void {
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 console.log(`[server] MudSeed running at http://localhost:${PORT}`);
+if (LAN) {
+  const lanIp = getLanIp();
+  if (lanIp) console.log(`[server] LAN access:           http://${lanIp}:${PORT}`);
+}
 console.log(`[server] Terminal client: deno run --allow-net --allow-env client.ts [--host localhost] [--port ${PORT}]`);
 
-Deno.serve({ port: PORT }, (req: Request): Response => {
+Deno.serve({ port: PORT, hostname: HOST }, (req: Request): Response => {
   if (req.headers.get("upgrade") === "websocket") {
     const { socket, response } = Deno.upgradeWebSocket(req);
     handleConnection(socket);
