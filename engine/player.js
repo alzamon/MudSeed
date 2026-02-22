@@ -131,4 +131,16 @@ function broadcast(text) {
   }
 }
 
-module.exports = { createPlayer, removePlayer, getPlayer, allPlayers, send, broadcast, findCharacter, createCharacter, saveCharacterState, setPassword, verifyPassword, hasPassword };
+/** Return all players currently in a given room */
+function playersInRoom(roomId) {
+  return [...players.values()].filter(p => p.roomId === roomId);
+}
+
+/** Send a message to all players in a room, optionally excluding one player by id */
+function broadcastToRoom(roomId, text, excludeId) {
+  for (const p of playersInRoom(roomId)) {
+    if (p.id !== excludeId) send(p, text);
+  }
+}
+
+module.exports = { createPlayer, removePlayer, getPlayer, allPlayers, send, broadcast, playersInRoom, broadcastToRoom, findCharacter, createCharacter, saveCharacterState, setPassword, verifyPassword, hasPassword };

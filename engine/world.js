@@ -193,6 +193,22 @@ function logGodAction(godName, msg) {
   if (state.godLog.length > 100) state.godLog.shift();
 }
 
+/**
+ * Append a player-originated event to the server's event ledger.
+ * The ledger is the authoritative sequence of events in the world.
+ */
+function addPlayerEvent(type, playerName, data) {
+  const entry = { type, player: playerName, at: new Date().toISOString(), ...data };
+  state.events.push(entry);
+  if (state.events.length > 200) state.events.shift();
+}
+
+/** Return the most recent ledger entries (default: last 20) */
+function getLedger(limit) {
+  const n = limit || 20;
+  return state.events.slice(-n);
+}
+
 /** Return the opposite cardinal direction */
 function reverseDir(dir) {
   const map = { north: 'south', south: 'north', east: 'west', west: 'east', up: 'down', down: 'up' };
@@ -210,4 +226,4 @@ function snapshot() {
   };
 }
 
-module.exports = { loadRooms, getRoom, listRooms, applyAction, snapshot, state };
+module.exports = { loadRooms, getRoom, listRooms, applyAction, addPlayerEvent, getLedger, snapshot, state };
