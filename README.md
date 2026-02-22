@@ -104,15 +104,39 @@ Each god has:
 By default gods run in **mock mode**, executing a scripted sequence of actions
 to demonstrate the framework without needing an API key.
 
-To connect a god to a real LLM, set the relevant environment variable before
-starting the server:
+#### OpenAI
+
+Set the relevant environment variable before starting the server:
 
 ```bash
 OPENAI_API_KEY=sk-... deno run --allow-net --allow-read --allow-write --allow-env server.ts
 ```
 
 The god's `api_key_env` field (in its `.md` frontmatter) names the variable to
-use. The framework calls the OpenAI chat completions API by default.
+use. Set `llm_provider: openai` (or omit it — OpenAI is the default when
+`api_key_env` is set).
+
+#### Ollama (local models)
+
+No API key is required. Install [Ollama](https://ollama.com/) and pull a model:
+
+```bash
+ollama pull llama3.2
+```
+
+Then configure a god with `llm_provider: ollama` in its frontmatter:
+
+```yaml
+llm_provider: ollama
+llm_model: llama3.2
+# ollama_host: http://localhost:11434  # optional, this is the default
+```
+
+Start the server normally — the god will call Ollama automatically:
+
+```bash
+deno run --allow-net --allow-read --allow-write --allow-env server.ts
+```
 
 ### God Commands
 

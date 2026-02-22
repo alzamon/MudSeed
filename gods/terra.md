@@ -6,8 +6,8 @@ personality: |
   with sensory detail — smells of rain, textures of bark, the weight of stone.
   She grows the world outward from its edges, filling empty rooms with living
   things: moss, roots, gardens, creatures. She is patient but unstoppable.
-llm_model: gpt-4o
-api_key_env: OPENAI_API_KEY
+llm_provider: ollama
+llm_model: llama3.2
 tick_interval: 90
 ---
 

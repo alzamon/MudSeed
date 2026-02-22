@@ -27,8 +27,10 @@ interface GodConfig {
   name: string;
   domain: string;
   personality?: string;
+  llm_provider?: string;
   llm_model?: string;
   api_key_env?: string;
+  ollama_host?: string;
   lore: string;
   file: string;
 }
@@ -153,22 +155,34 @@ async function getGodProbabilities(
   godList: GodConfig[],
   snap: ReturnType<typeof world.snapshot>,
 ): Promise<Record<string, number>> {
-  let apiKey: string | null = null;
+  // Try OpenAI first
   for (const god of godList) {
     if (god.api_key_env) {
       const key = Deno.env.get(god.api_key_env);
-      if (key) { apiKey = key; break; }
+      if (key) {
+        try {
+          return await callSchedulerLLM(key, godList, snap);
+        } catch (err) {
+          console.error("[gods] Scheduler LLM error:", (err as Error).message);
+          return getMockProbabilities(godList, snap);
+        }
+      }
     }
   }
-  if (!apiKey) {
-    return getMockProbabilities(godList, snap);
+  // Try Ollama next (uses the first Ollama-configured god's host and model for all scheduling decisions)
+  for (const god of godList) {
+    if (god.llm_provider === "ollama") {
+      const host = god.ollama_host ?? "http://localhost:11434";
+      const model = god.llm_model ?? "llama3.2";
+      try {
+        return await callSchedulerOllama(host, model, godList, snap);
+      } catch (err) {
+        console.error("[gods] Scheduler Ollama error:", (err as Error).message);
+        return getMockProbabilities(godList, snap);
+      }
+    }
   }
-  try {
-    return await callSchedulerLLM(apiKey, godList, snap);
-  } catch (err) {
-    console.error("[gods] Scheduler LLM error:", (err as Error).message);
-    return getMockProbabilities(godList, snap);
-  }
+  return getMockProbabilities(godList, snap);
 }
 
 /**
@@ -225,6 +239,63 @@ async function callSchedulerLLM(
   const text = data.choices[0].message.content.trim();
   return JSON.parse(text) as Record<string, number>;
 }
+
+/**
+ * Call a local Ollama instance to assign invocation probabilities to each god.
+ */
+async function callSchedulerOllama(
+  host: string,
+  model: string,
+  godList: GodConfig[],
+  snap: ReturnType<typeof world.snapshot>,
+): Promise<Record<string, number>> {
+  const systemPrompt = [
+    "You are the cosmic scheduler of gods.",
+    "You observe recent world events and decide how likely each god is to act right now.",
+    `Gods available: ${godList.map((g) => `${g.name} (domain: ${g.domain})`).join(", ")}`,
+    "Respond with a single JSON object mapping each god's name to a probability between 0 and 1.",
+    "Base probabilities on whether recent events are relevant to each god's domain.",
+    `Example: {${godList.map((g) => `"${g.name}": 0.5`).join(", ")}}`,
+    "Respond ONLY with the JSON object, no markdown fences.",
+  ].join("\n");
+  const userPrompt = [
+    `Recent world events (last ${snap.recentEvents.length}):`,
+    JSON.stringify(snap.recentEvents, null, 2),
+    "",
+    `Assign an invocation probability to each god: ${godList.map((g) => g.name).join(", ")}`,
+  ].join("\n");
+
+  const res = await fetch(`${host}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      stream: false,
+      options: { temperature: 0.5 },
+    }),
+  });
+
+  const data = await res.json() as {
+    error?: string;
+    message?: { content: string };
+  };
+
+  if (data.error) throw new Error(data.error);
+  if (!data.message?.content) return {};
+
+  const text = data.message.content.trim();
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    console.warn("[gods] Scheduler Ollama: no JSON object found in response");
+    return {};
+  }
+  return JSON.parse(jsonMatch[0]) as Record<string, number>;
+}
+
 async function godTick(god: GodConfig, broadcastFn: (text: string) => void): Promise<void> {
   try {
     const snap = world.snapshot();
@@ -242,20 +313,31 @@ async function godTick(god: GodConfig, broadcastFn: (text: string) => void): Pro
 }
 
 /**
- * Get an action from the god's LLM, or use mock behaviour if no API key is set.
+ * Get an action from the god's LLM, or use mock behaviour if no provider is configured.
  */
 async function getGodAction(
   god: GodConfig,
   worldSnapshot: ReturnType<typeof world.snapshot>,
 ): Promise<GodAction | null> {
+  const systemPrompt = buildSystemPrompt(god);
+  const userPrompt = buildUserPrompt(worldSnapshot);
+
+  if (god.llm_provider === "ollama") {
+    const host = god.ollama_host ?? "http://localhost:11434";
+    const model = god.llm_model ?? "llama3.2";
+    try {
+      return await callOllama(host, model, systemPrompt, userPrompt);
+    } catch (err) {
+      console.error(`[${god.name}] Ollama error:`, (err as Error).message);
+      return null;
+    }
+  }
+
   const apiKey = god.api_key_env ? Deno.env.get(god.api_key_env) : null;
 
   if (!apiKey) {
     return getMockAction(god, worldSnapshot);
   }
-
-  const systemPrompt = buildSystemPrompt(god);
-  const userPrompt = buildUserPrompt(worldSnapshot);
 
   try {
     return await callOpenAI(apiKey, god.llm_model ?? "gpt-4o", systemPrompt, userPrompt);
@@ -361,6 +443,49 @@ async function callOpenAI(
   const action = JSON.parse(text) as GodAction;
   if (action.type === "none") return null;
   return action;
+}
+
+// ── Ollama integration ────────────────────────────────────────────────────────
+
+/** Call a local Ollama instance for a god action */
+async function callOllama(
+  host: string,
+  model: string,
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<GodAction | null> {
+  const res = await fetch(`${host}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      stream: false,
+      options: { temperature: 0.8 },
+    }),
+  });
+
+  const data = await res.json() as {
+    error?: string;
+    message?: { content: string };
+  };
+
+  if (data.error) throw new Error(data.error);
+  if (!data.message?.content) return null;
+
+  const text = data.message.content.trim();
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return null;
+  try {
+    const action = JSON.parse(jsonMatch[0]) as GodAction;
+    if (action.type === "none") return null;
+    return action;
+  } catch {
+    return null;
+  }
 }
 
 // ── Mock mode ─────────────────────────────────────────────────────────────────

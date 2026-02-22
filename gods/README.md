@@ -13,9 +13,10 @@ Each god is defined by a Markdown file in this directory. The file sets the god'
 | `name` | The god's name |
 | `domain` | Area of influence (e.g. fire, creation, chaos) |
 | `personality` | How the god behaves and speaks |
-| `llm_model` | LLM model to use (e.g. `gpt-4`, `ollama/llama3`) |
-| `llm_endpoint` | Optional custom endpoint (for local models) |
-| `api_key_env` | Environment variable holding the API key |
+| `llm_provider` | LLM provider to use: `openai` (default) or `ollama` |
+| `llm_model` | LLM model to use (e.g. `gpt-4o`, `llama3.2`) |
+| `api_key_env` | Environment variable holding the API key (OpenAI only) |
+| `ollama_host` | Ollama server URL (default: `http://localhost:11434`) |
 | `tick_interval` | How often (in seconds) the god acts |
 
 ## Active Gods
@@ -26,9 +27,11 @@ Each god is defined by a Markdown file in this directory. The file sets the god'
 
 ## Adding a New God
 
-1. Copy the template below into a new `<godname>.md` file.
+1. Copy one of the templates below into a new `<godname>.md` file.
 2. Fill in all fields.
 3. Restart the server — the god will be loaded automatically.
+
+### OpenAI template
 
 ```markdown
 ---
@@ -36,8 +39,28 @@ name: MyGod
 domain: my domain
 personality: |
   Describe how this god thinks and acts.
+llm_provider: openai
 llm_model: gpt-4o
 api_key_env: OPENAI_API_KEY
+tick_interval: 60
+---
+
+## Lore
+
+Write the god's backstory and mythology here. This text is injected into the LLM system prompt.
+```
+
+### Ollama template
+
+```markdown
+---
+name: MyGod
+domain: my domain
+personality: |
+  Describe how this god thinks and acts.
+llm_provider: ollama
+llm_model: llama3.2
+ollama_host: http://localhost:11434
 tick_interval: 60
 ---
 
