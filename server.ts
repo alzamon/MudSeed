@@ -11,6 +11,7 @@
 
 import { extname, join } from "./engine/path.ts";
 import * as world from "./engine/world.ts";
+import type { WearableItem, WieldableItem } from "./engine/world.ts";
 import * as playerManager from "./engine/player.ts";
 import type { Player } from "./engine/player.ts";
 import * as godEngine from "./engine/gods.ts";
@@ -214,7 +215,7 @@ async function handlePasswordInput(session: Session, password: string): Promise<
     const char = playerManager.createCharacter(session.pendingName!);
     await playerManager.setPassword(session.pendingName!, session.pendingPassword!);
     session.pendingPassword = null;
-    const player = playerManager.createPlayer(session.ws, char.name, char.roomId);
+    const player = playerManager.createPlayer(session.ws, char.name, char.roomId, char);
     session.player = player;
     session.state = "in_game";
     console.log(`[server] Player ${player.name} created`);
@@ -237,7 +238,7 @@ async function handlePasswordInput(session: Session, password: string): Promise<
     const character =
       playerManager.findCharacter(session.pendingName!) ??
       playerManager.createCharacter(session.pendingName!);
-    const player = playerManager.createPlayer(session.ws, character.name, character.roomId);
+    const player = playerManager.createPlayer(session.ws, character.name, character.roomId, character);
     session.player = player;
     session.state = "in_game";
     console.log(`[server] Player ${player.name} logged in`);
@@ -282,7 +283,37 @@ function handleCommand(player: Player, raw: string): void {
     case "inventory":
     case "inv":
     case "i":
-      return playerManager.send(player, "You carry nothing. The gods have not yet blessed you with possessions.");
+      return cmdInventory(player);
+
+    case "get":
+    case "take": {
+      const target = args.join(" ");
+      return cmdGet(player, target);
+    }
+
+    case "drop": {
+      const target = args.join(" ");
+      return cmdDrop(player, target);
+    }
+
+    case "wear":
+    case "put": {
+      const target = args.join(" ");
+      return cmdWear(player, target);
+    }
+
+    case "wield":
+    case "equip": {
+      const target = args.join(" ");
+      return cmdWield(player, target);
+    }
+
+    case "remove":
+    case "unwield":
+    case "unequip": {
+      const target = args.join(" ");
+      return cmdRemove(player, target);
+    }
 
     case "who":
       return cmdWho(player);
@@ -313,6 +344,175 @@ function handleCommand(player: Player, raw: string): void {
     default:
       playerManager.send(player, `Unknown command: "${cmd}". Type "help" for a list of commands.`);
   }
+}
+
+function cmdInventory(player: Player): void {
+  const lines: string[] = ["", "Inventory"];
+  if (player.inventory.length === 0) {
+    lines.push("  (nothing)");
+  } else {
+    for (const id of player.inventory) {
+      const item = world.state.items[id];
+      lines.push(`  ${item ? item.name : id}`);
+    }
+  }
+  if (player.wielding) {
+    const w = world.state.items[player.wielding];
+    lines.push(`Wielding: ${w ? w.name : player.wielding}`);
+  }
+  const wornEntries = Object.entries(player.worn);
+  if (wornEntries.length) {
+    lines.push("Wearing:");
+    for (const [slot, id] of wornEntries) {
+      const item = world.state.items[id];
+      lines.push(`  ${slot}: ${item ? item.name : id}`);
+    }
+  }
+  lines.push("");
+  playerManager.send(player, lines.join("\n"));
+}
+
+function cmdGet(player: Player, target: string): void {
+  if (!target) {
+    playerManager.send(player, "Get what?");
+    return;
+  }
+  const room = world.getRoom(player.roomId);
+  if (!room) return;
+  const idx = room.items.findIndex((id) => {
+    const item = world.state.items[id];
+    return item && item.name.toLowerCase().includes(target);
+  });
+  if (idx === -1) {
+    playerManager.send(player, `You see no "${target}" here.`);
+    return;
+  }
+  const [itemId] = room.items.splice(idx, 1);
+  player.inventory.push(itemId);
+  world.saveRoom(room);
+  playerManager.saveCharacterState(player);
+  const item = world.state.items[itemId];
+  const name = item ? item.name : itemId;
+  playerManager.send(player, `You pick up ${name}.`);
+  playerManager.broadcastToRoom(player.roomId, `${player.name} picks up ${name}.`, player.id);
+}
+
+function cmdDrop(player: Player, target: string): void {
+  if (!target) {
+    playerManager.send(player, "Drop what?");
+    return;
+  }
+  const idx = player.inventory.findIndex((id) => {
+    const item = world.state.items[id];
+    return item && item.name.toLowerCase().includes(target);
+  });
+  if (idx === -1) {
+    playerManager.send(player, `You are not carrying "${target}".`);
+    return;
+  }
+  const [itemId] = player.inventory.splice(idx, 1);
+  const room = world.getRoom(player.roomId);
+  if (room) {
+    room.items.push(itemId);
+    world.saveRoom(room);
+  }
+  playerManager.saveCharacterState(player);
+  const item = world.state.items[itemId];
+  const name = item ? item.name : itemId;
+  playerManager.send(player, `You drop ${name}.`);
+  playerManager.broadcastToRoom(player.roomId, `${player.name} drops ${name}.`, player.id);
+}
+
+function cmdWear(player: Player, target: string): void {
+  if (!target) {
+    playerManager.send(player, "Wear what?");
+    return;
+  }
+  const itemId = player.inventory.find((id) => {
+    const item = world.state.items[id];
+    return item && item.name.toLowerCase().includes(target);
+  });
+  if (!itemId) {
+    playerManager.send(player, `You are not carrying "${target}".`);
+    return;
+  }
+  const item = world.state.items[itemId] as WearableItem;
+  if (!item.wearable) {
+    playerManager.send(player, `${item.name} cannot be worn.`);
+    return;
+  }
+  if (player.worn[item.slot]) {
+    const current = world.state.items[player.worn[item.slot]];
+    playerManager.send(player, `You are already wearing ${current ? current.name : "something"} on your ${item.slot}. Remove it first.`);
+    return;
+  }
+  player.inventory.splice(player.inventory.indexOf(itemId), 1);
+  player.worn[item.slot] = itemId;
+  playerManager.saveCharacterState(player);
+  playerManager.send(player, `You wear ${item.name}.`);
+  playerManager.broadcastToRoom(player.roomId, `${player.name} puts on ${item.name}.`, player.id);
+}
+
+function cmdWield(player: Player, target: string): void {
+  if (!target) {
+    playerManager.send(player, "Wield what?");
+    return;
+  }
+  const itemId = player.inventory.find((id) => {
+    const item = world.state.items[id];
+    return item && item.name.toLowerCase().includes(target);
+  });
+  if (!itemId) {
+    playerManager.send(player, `You are not carrying "${target}".`);
+    return;
+  }
+  const item = world.state.items[itemId] as WieldableItem;
+  if (!item.wieldable) {
+    playerManager.send(player, `${item.name} cannot be wielded.`);
+    return;
+  }
+  if (player.wielding) {
+    const current = world.state.items[player.wielding];
+    playerManager.send(player, `You are already wielding ${current ? current.name : "something"}. Remove it first.`);
+    return;
+  }
+  player.inventory.splice(player.inventory.indexOf(itemId), 1);
+  player.wielding = itemId;
+  playerManager.saveCharacterState(player);
+  playerManager.send(player, `You wield ${item.name}.`);
+  playerManager.broadcastToRoom(player.roomId, `${player.name} wields ${item.name}.`, player.id);
+}
+
+function cmdRemove(player: Player, target: string): void {
+  if (!target) {
+    playerManager.send(player, "Remove what?");
+    return;
+  }
+  // Check wielded item
+  if (player.wielding) {
+    const w = world.state.items[player.wielding];
+    if (w && w.name.toLowerCase().includes(target)) {
+      player.inventory.push(player.wielding);
+      player.wielding = null;
+      playerManager.saveCharacterState(player);
+      playerManager.send(player, `You stop wielding ${w.name}.`);
+      playerManager.broadcastToRoom(player.roomId, `${player.name} lowers ${w.name}.`, player.id);
+      return;
+    }
+  }
+  // Check worn items
+  for (const [slot, id] of Object.entries(player.worn)) {
+    const item = world.state.items[id];
+    if (item && item.name.toLowerCase().includes(target)) {
+      delete player.worn[slot];
+      player.inventory.push(id);
+      playerManager.saveCharacterState(player);
+      playerManager.send(player, `You remove ${item.name}.`);
+      playerManager.broadcastToRoom(player.roomId, `${player.name} removes ${item.name}.`, player.id);
+      return;
+    }
+  }
+  playerManager.send(player, `You are not wearing or wielding "${target}".`);
 }
 
 function sendRoom(player: Player): void {
@@ -398,18 +598,47 @@ function cmdExamine(player: Player, target: string): void {
   const room = world.getRoom(player.roomId);
   if (!room) return;
 
+  // Helper to describe an item
+  function describeItem(item: world.Item): string {
+    let text = `${item.name}: ${item.description}`;
+    const wi = item as WieldableItem;
+    const wa = item as WearableItem;
+    const tags: string[] = [];
+    if (wi.wieldable) {
+      const parts = ["wieldable"];
+      if (wi.damage) parts.push(`damage: ${wi.damage}`);
+      if (wi.hands === 2) parts.push("two-handed");
+      tags.push(parts.join(", "));
+    }
+    if (wa.wearable) {
+      const parts = [`wearable (${wa.slot})`];
+      if (wa.defense) parts.push(`defense: ${wa.defense}`);
+      tags.push(parts.join(", "));
+    }
+    if (item.properties && Object.keys(item.properties).length) {
+      const props = Object.entries(item.properties)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(", ");
+      tags.push(props);
+    }
+    if (tags.length) text += ` [${tags.join("; ")}]`;
+    return text;
+  }
+
   // Check items in room
   for (const itemId of (room.items ?? [])) {
     const item = world.state.items[itemId];
     if (item && item.name.toLowerCase().includes(target)) {
-      let text = `${item.name}: ${item.description}`;
-      if (item.properties && Object.keys(item.properties).length) {
-        const props = Object.entries(item.properties)
-          .map(([k, v]) => `${k}: ${v}`)
-          .join(", ");
-        text += ` [${props}]`;
-      }
-      playerManager.send(player, text);
+      playerManager.send(player, describeItem(item));
+      return;
+    }
+  }
+
+  // Check items in inventory / equipped
+  for (const itemId of [...player.inventory, ...(player.wielding ? [player.wielding] : []), ...Object.values(player.worn)]) {
+    const item = world.state.items[itemId];
+    if (item && item.name.toLowerCase().includes(target)) {
+      playerManager.send(player, describeItem(item));
       return;
     }
   }
@@ -508,6 +737,12 @@ function cmdHelp(player: Player): void {
       "north/south/...   — move in a direction (or n/s/e/w/u/d)",
       "go <direction>    — move in a direction",
       "examine <thing>   — examine an item or NPC",
+      "get/take <item>   — pick up an item from the room",
+      "drop <item>       — drop an item in the room",
+      "wear <item>       — wear a wearable item",
+      "wield <item>      — wield a wieldable item",
+      "remove <item>     — remove worn or wielded item",
+      "inventory / i     — show your carried items and equipment",
       "say <message>     — speak to players in your room",
       "shout <message>   — shout to all players everywhere",
       "who               — list connected players",

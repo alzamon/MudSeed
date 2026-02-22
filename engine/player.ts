@@ -20,11 +20,17 @@ export interface Player {
   name: string;
   roomId: string;
   ws: WebSocket;
+  inventory: string[];
+  worn: Record<string, string>;
+  wielding: string | null;
 }
 
 export interface Character {
   name: string;
   roomId: string;
+  inventory: string[];
+  worn: Record<string, string>;
+  wielding: string | null;
 }
 
 interface PasswordEntry {
@@ -158,6 +164,10 @@ function loadCharacters(): void {
   for (const file of files) {
     try {
       const char = parseDataFile<Character>(Deno.readTextFileSync(join(CHARACTERS_DIR, file)));
+      // Provide defaults for fields added after initial character creation
+      char.inventory ??= [];
+      char.worn ??= {};
+      char.wielding ??= null;
       characters.set(char.name.toLowerCase(), char);
     } catch (err) {
       console.error("[player] Failed to load character file:", file, (err as Error).message);
@@ -229,7 +239,7 @@ export function findCharacter(name: string): Character | null {
 
 /** Create and store a new character with default starting values. */
 export function createCharacter(name: string): Character {
-  const char: Character = { name, roomId: "pantheon" };
+  const char: Character = { name, roomId: "pantheon", inventory: [], worn: {}, wielding: null };
   characters.set(name.toLowerCase(), char);
   saveCharacter(char);
   return char;
@@ -240,19 +250,25 @@ export function saveCharacterState(player: Player): void {
   const char = characters.get(player.name.toLowerCase());
   if (char) {
     char.roomId = player.roomId;
+    char.inventory = player.inventory;
+    char.worn = player.worn;
+    char.wielding = player.wielding;
     saveCharacter(char);
   }
 }
 
 // ── Player management ─────────────────────────────────────────────────────────
 
-export function createPlayer(ws: WebSocket, name: string, roomId: string): Player {
+export function createPlayer(ws: WebSocket, name: string, roomId: string, char?: Character): Player {
   const id = nextId++;
   const player: Player = {
     id,
     name: name || `Wanderer${id}`,
     roomId: roomId || "pantheon",
     ws,
+    inventory: char?.inventory ?? [],
+    worn: char?.worn ?? {},
+    wielding: char?.wielding ?? null,
   };
   players.set(id, player);
   return player;

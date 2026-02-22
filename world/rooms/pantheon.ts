@@ -4,6 +4,7 @@ export default {
   "description": "You stand in the Pantheon — a vast, circular chamber of pale stone that smells faintly of ozone and possibility. The ceiling arches impossibly high overhead, lost in a soft luminescence that has no obvious source. The walls are smooth and unmarked, waiting. This is where all things begin.\n\nThe air hums with a low, almost sub-audible resonance, as if the room itself is breathing. You are not sure whether you are alone.",
   "exits": {
     "north": "hall-of-names",
+    "east": "armory",
     "down": "unmade-place"
   },
   "items": [
