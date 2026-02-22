@@ -237,6 +237,7 @@ async function callSchedulerLLM(
   if (!data.choices?.length) return {};
 
   const text = data.choices[0].message.content.trim();
+  console.log("[gods] Scheduler LLM response:", text);
   return JSON.parse(text) as Record<string, number>;
 }
 
@@ -288,6 +289,7 @@ async function callSchedulerOllama(
   if (!data.message?.content) return {};
 
   const text = data.message.content.trim();
+  console.log("[gods] Scheduler Ollama response:", text);
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     console.warn("[gods] Scheduler Ollama: no JSON object found in response");
@@ -440,6 +442,7 @@ async function callOpenAI(
   if (!data.choices?.length) return null;
 
   const text = data.choices[0].message.content.trim();
+  console.log("[gods] LLM response:", text);
   const action = JSON.parse(text) as GodAction;
   if (action.type === "none") return null;
   return action;
@@ -477,6 +480,7 @@ async function callOllama(
   if (!data.message?.content) return null;
 
   const text = data.message.content.trim();
+  console.log("[gods] Ollama response:", text);
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) return null;
   try {
