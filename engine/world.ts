@@ -2,10 +2,12 @@
  * MudSeed — World state and action system.
  */
 
-import { join } from "./path.ts";
+import { join, parseDataFile, toDataFile } from "./path.ts";
 
 const __dirname = import.meta.dirname!;
 const ROOMS_DIR = join(__dirname, "..", "world", "rooms");
+const ITEMS_DIR = join(__dirname, "..", "world", "items");
+const NPCS_DIR = join(__dirname, "..", "world", "npcs");
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -82,23 +84,76 @@ export const state: WorldState = {
   godLog: [],
 };
 
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+/** Ensure a directory exists, creating it recursively if needed */
+function ensureDir(dir: string): void {
+  try {
+    Deno.statSync(dir);
+  } catch {
+    Deno.mkdirSync(dir, { recursive: true });
+  }
+}
+
 // ── Room persistence ──────────────────────────────────────────────────────────
 
-/** Load all rooms from disk into memory */
+/** Load all rooms from TypeScript data files into memory */
 export function loadRooms(): void {
   const files = [...Deno.readDirSync(ROOMS_DIR)]
-    .filter((e) => e.isFile && e.name.endsWith(".json"))
+    .filter((e) => e.isFile && e.name.endsWith(".ts"))
     .map((e) => e.name);
   for (const file of files) {
-    const room = JSON.parse(Deno.readTextFileSync(join(ROOMS_DIR, file))) as Room;
+    const room = parseDataFile<Room>(Deno.readTextFileSync(join(ROOMS_DIR, file)));
     state.rooms[room.id] = room;
   }
 }
 
-/** Persist a single room to disk */
+/** Persist a single room as a TypeScript data file */
 function saveRoom(room: Room): void {
-  const file = join(ROOMS_DIR, `${room.id}.json`);
-  Deno.writeTextFileSync(file, JSON.stringify(room, null, 2));
+  const file = join(ROOMS_DIR, `${room.id}.ts`);
+  Deno.writeTextFileSync(file, toDataFile(room));
+}
+
+// ── Item persistence ──────────────────────────────────────────────────────────
+
+/** Load all items from TypeScript data files into memory */
+export function loadItems(): void {
+  ensureDir(ITEMS_DIR);
+  const files = [...Deno.readDirSync(ITEMS_DIR)]
+    .filter((e) => e.isFile && e.name.endsWith(".ts"))
+    .map((e) => e.name);
+  for (const file of files) {
+    const item = parseDataFile<Item>(Deno.readTextFileSync(join(ITEMS_DIR, file)));
+    state.items[item.id] = item;
+  }
+}
+
+/** Persist a single item as a TypeScript data file */
+function saveItem(item: Item): void {
+  ensureDir(ITEMS_DIR);
+  const file = join(ITEMS_DIR, `${item.id}.ts`);
+  Deno.writeTextFileSync(file, toDataFile(item));
+}
+
+// ── NPC persistence ───────────────────────────────────────────────────────────
+
+/** Load all NPCs from TypeScript data files into memory */
+export function loadNpcs(): void {
+  ensureDir(NPCS_DIR);
+  const files = [...Deno.readDirSync(NPCS_DIR)]
+    .filter((e) => e.isFile && e.name.endsWith(".ts"))
+    .map((e) => e.name);
+  for (const file of files) {
+    const npc = parseDataFile<NPC>(Deno.readTextFileSync(join(NPCS_DIR, file)));
+    state.npcs[npc.id] = npc;
+  }
+}
+
+/** Persist a single NPC as a TypeScript data file */
+function saveNpc(npc: NPC): void {
+  ensureDir(NPCS_DIR);
+  const file = join(NPCS_DIR, `${npc.id}.ts`);
+  Deno.writeTextFileSync(file, toDataFile(npc));
 }
 
 /** Get a room by id */
@@ -208,6 +263,7 @@ function createItem(
     state.rooms[room_id].items.push(id);
     saveRoom(state.rooms[room_id]);
   }
+  saveItem(item);
   logGodAction(godName, `Created item '${name}' in room '${room_id}'`);
   return {
     ok: true,
@@ -228,6 +284,7 @@ function createNpc(
     state.rooms[room_id].npcs.push(id);
     saveRoom(state.rooms[room_id]);
   }
+  saveNpc(npc);
   logGodAction(godName, `Spawned NPC '${name}' in room '${room_id}'`);
   return {
     ok: true,
@@ -310,7 +367,7 @@ export function getLedger(limit?: number): WorldEvent[] {
   return state.events.slice(-n);
 }
 
-// ── Utilities ─────────────────────────────────────────────────────────────────
+// ── World helpers ─────────────────────────────────────────────────────────────
 
 /** Return the opposite cardinal direction */
 function reverseDir(dir: string): string | null {

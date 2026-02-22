@@ -7,10 +7,11 @@
  * incompatible and will need to be reset.
  */
 
-import { join } from "./path.ts";
+import { join, parseDataFile, toDataFile } from "./path.ts";
 
 const __dirname = import.meta.dirname!;
 const PASSWORDS_FILE = join(__dirname, "..", "data", "passwords.json");
+const CHARACTERS_DIR = join(__dirname, "..", "world", "characters");
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -21,7 +22,7 @@ export interface Player {
   ws: WebSocket;
 }
 
-interface Character {
+export interface Character {
   name: string;
   roomId: string;
 }
@@ -138,6 +139,42 @@ export function hasPassword(name: string): boolean {
 // Load persisted passwords on startup
 loadPasswords();
 
+// ── Character persistence ─────────────────────────────────────────────────────
+
+function ensureCharactersDir(): void {
+  try {
+    Deno.statSync(CHARACTERS_DIR);
+  } catch {
+    Deno.mkdirSync(CHARACTERS_DIR, { recursive: true });
+  }
+}
+
+/** Load all persisted characters from TypeScript data files into memory */
+function loadCharacters(): void {
+  ensureCharactersDir();
+  const files = [...Deno.readDirSync(CHARACTERS_DIR)]
+    .filter((e) => e.isFile && e.name.endsWith(".ts"))
+    .map((e) => e.name);
+  for (const file of files) {
+    try {
+      const char = parseDataFile<Character>(Deno.readTextFileSync(join(CHARACTERS_DIR, file)));
+      characters.set(char.name.toLowerCase(), char);
+    } catch (err) {
+      console.error("[player] Failed to load character file:", file, (err as Error).message);
+    }
+  }
+}
+
+/** Persist a character as a TypeScript data file */
+function saveCharacter(char: Character): void {
+  ensureCharactersDir();
+  const file = join(CHARACTERS_DIR, `${char.name.toLowerCase()}.ts`);
+  Deno.writeTextFileSync(file, toDataFile(char));
+}
+
+// Load persisted characters on startup
+loadCharacters();
+
 // ── Character management ──────────────────────────────────────────────────────
 
 /** Find a character by name (case-insensitive). Returns character data or null. */
@@ -149,6 +186,7 @@ export function findCharacter(name: string): Character | null {
 export function createCharacter(name: string): Character {
   const char: Character = { name, roomId: "pantheon" };
   characters.set(name.toLowerCase(), char);
+  saveCharacter(char);
   return char;
 }
 
@@ -157,6 +195,7 @@ export function saveCharacterState(player: Player): void {
   const char = characters.get(player.name.toLowerCase());
   if (char) {
     char.roomId = player.roomId;
+    saveCharacter(char);
   }
 }
 

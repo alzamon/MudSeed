@@ -31,6 +31,8 @@ const PUBLIC_DIR = join(__dirname, "public");
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 world.loadRooms();
+world.loadItems();
+world.loadNpcs();
 godEngine.loadGods();
 
 // ── MIME types ────────────────────────────────────────────────────────────────
