@@ -2,3 +2,5 @@ node_modules/
 npm-debug.log*
 .env
 data/
+# Deno cache (optional - can be committed for reproducibility)
+.deno/
